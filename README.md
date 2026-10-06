@@ -34,6 +34,7 @@ This tool allows you to convert CSV transaction exports to an import file that c
 - [Swissquote](https://en.swissquote.com/)
 - [TradeRepublic](https://traderepublic.com)
 - [Trading 212](https://trading212.com)
+- [Vanguard UK](https://www.vanguardinvestor.co.uk)
 - [XTB](https://www.xtb.com/int)
 
 Is your broker not in the list? Feel free to create an [issue](https://github.com/dickwolff/Export-To-Ghostfolio/issues/new) or, even better, build it yourself and create a [pull request](https://github.com/dickwolff/Export-To-Ghostfolio/compare)! For more info, see [contributing](#contributing).
@@ -312,6 +313,7 @@ You can now run `npm run start [exporttype]`. See the table with run commands be
 | Swissquote    | `run start swissquote` (or `sq`)    |
 | TradeRepublic | `run start traderepublic` (or `tr`) |
 | Trading 212   | `run start trading212` (or `t212`)  |
+| Vanguard UK   | `run start vanguarduk` (or `vg`)    |
 | XTB           | `run start xtb`                     |
 
 ### Caching

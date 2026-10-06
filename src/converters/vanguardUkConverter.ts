@@ -1,0 +1,266 @@
+import dayjs from "dayjs";
+import { parse } from "csv-parse";
+import { parse as parseSync } from "csv-parse/sync";
+import customParseFormat from "dayjs/plugin/customParseFormat";
+import { AbstractConverter } from "./abstractconverter";
+import { SecurityService } from "../securityService";
+import { GhostfolioExport } from "../models/ghostfolioExport";
+import { GhostfolioActivity } from "../models/ghostfolioActivity";
+import { VanguardUkInvestmentRecord, VanguardUkRecord } from "../models/vanguardUkRecord";
+import YahooFinanceRecord from "../models/yahooFinanceRecord";
+import { GhostfolioOrderType } from "../models/ghostfolioOrderType";
+import { getTags } from "../helpers/tagHelpers";
+
+export class VanguardUkConverter extends AbstractConverter {
+
+    constructor(securityService: SecurityService) {
+        super(securityService);
+
+        dayjs.extend(customParseFormat);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public processFileContents(input: string, successCallback: any, errorCallback: any): void {
+
+        // The export holds multiple tables, so split out the cash transactions.
+        const lines = input.split(/\r?\n/);
+        const cashStart = lines.findIndex(line => /^Date,Details,/i.test(line));
+
+        if (cashStart === -1) {
+            return errorCallback(new Error("An error occurred while parsing! Details: Cash transactions header not found"));
+        }
+
+        let cashEnd = lines.findIndex((line, idx) => idx > cashStart && /^Balance,/i.test(line));
+        if (cashEnd === -1) {
+            cashEnd = lines.length;
+        }
+
+        const cashSection = lines.slice(cashStart + 1, cashEnd).join("\n");
+
+        parse(cashSection, {
+            delimiter: ",",
+            relax_column_count: true,
+            skip_empty_lines: true,
+            // The export has two trailing empty columns.
+            columns: ["date", "details", "amount", "balance", false, false],
+            cast: (columnValue, context) => {
+                if (context.column === "amount" || context.column === "balance") {
+                    return columnValue === "" ? 0 : parseFloat(columnValue.replace(/,/g, ""));
+                }
+
+                return columnValue;
+            }
+        }, async (err, records: VanguardUkRecord[]) => {
+
+            try {
+
+                // Check if parsing failed..
+                if (err || records === undefined || records.length === 0) {
+                    let errorMsg = "An error occurred while parsing!";
+
+                    if (err) {
+                        errorMsg += ` Details: ${err.message}`
+                    }
+
+                    return errorCallback(new Error(errorMsg))
+                }
+
+                console.log("[i] Read CSV file. Start processing..");
+                const result: GhostfolioExport = {
+                    meta: {
+                        date: new Date(),
+                        version: "v0"
+                    },
+                    activities: []
+                }
+
+                // Older cash lines lack a ticker, so look it up in the investment transactions table.
+                const tickersByTrade = this.getTickersByTrade(lines, cashEnd);
+
+                // Trades by date and fund name, so a following dealing fee can be added to its trade (null when the trade was skipped).
+                const trades = new Map<string, GhostfolioActivity | null>();
+
+                // Populate the progress bar.
+                const bar1 = this.progress.create(records.length, 0);
+
+                for (let idx = 0; idx < records.length; idx++) {
+                    const record = records[idx];
+
+                    // Check if the record should be ignored.
+                    if (this.isIgnoredRecord(record)) {
+                        bar1.increment();
+                        continue;
+                    }
+
+                    const date = dayjs(record.date, "DD/MM/YYYY").format("YYYY-MM-DDTHH:mm:ssZ");
+                    const details = record.details.trim();
+
+                    // Dealing fees are added to the fee of the trade they belong to.
+                    const dealingFee = details.match(/^ETF dealing fee \((?:buy|sell)\) (.+)$/i);
+                    if (dealingFee) {
+                        const tradeToCharge = trades.get(`${record.date}|${dealingFee[1]}`);
+
+                        if (tradeToCharge) {
+                            tradeToCharge.fee += Math.abs(record.amount);
+                        }
+
+                        bar1.increment();
+                        continue;
+                    }
+
+                    const dividend = details.match(/^DIV:\s*([^.\s]+)\S*\s*@\s*([A-Z]{3})\s*([\d.]+)/i);
+                    const trade = details.match(/^(Bought|Sold) ([\d,.]+) (.+)$/i);
+
+                    let symbol: string;
+                    let name: string = null;
+                    let currency = "GBP";
+                    let quantity: number;
+                    let unitPrice: number;
+                    let action: string;
+
+                    if (dividend) {
+                        action = "dividend";
+                        symbol = dividend[1];
+                        currency = dividend[2];
+                        unitPrice = parseFloat(dividend[3]);
+
+                        // The export has no share count, so derive it from the payout.
+                        quantity = Math.round(record.amount / unitPrice);
+                    }
+                    else if (trade) {
+                        action = trade[1].toLocaleLowerCase() === "bought" ? "buy" : "sell";
+                        quantity = parseFloat(trade[2].replace(/,/g, ""));
+                        name = trade[3];
+                        unitPrice = Math.abs(record.amount) / quantity;
+
+                        symbol = name.match(/\(([A-Z0-9]+)\)\s*$/)?.[1]
+                            ?? tickersByTrade.get(this.getTradeKey(quantity, record.amount));
+                    }
+                    else {
+                        this.progress.log(`[i] Unknown cash transaction '${details}' on ${record.date}, skipping..\n`);
+                        bar1.increment();
+                        continue;
+                    }
+
+                    let security: YahooFinanceRecord;
+                    try {
+                        security = await this.securityService.getSecurity(
+                            undefined,
+                            symbol,
+                            name,
+                            currency,
+                            this.progress);
+                    }
+                    catch (err) {
+                        /* istanbul ignore next */
+                        this.logQueryError(symbol || name, idx + 2);
+                        return errorCallback(err);
+                    }
+
+                    // Log whenever there was no match found.
+                    if (!security) {
+                        this.progress.log(`[i] No result found for ${action} action for ${symbol || name} with currency ${currency}! Please add this manually..\n`);
+
+                        if (trade) {
+                            trades.set(`${record.date}|${name}`, null);
+                        }
+
+                        bar1.increment();
+                        continue;
+                    }
+
+                    const activity: GhostfolioActivity = {
+                        accountId: process.env.GHOSTFOLIO_ACCOUNT_ID,
+                        comment: details,
+                        fee: 0,
+                        quantity: quantity,
+                        type: GhostfolioOrderType[action],
+                        unitPrice: unitPrice,
+                        currency: security.currency,
+                        dataSource: "YAHOO",
+                        date: date,
+                        symbol: security.symbol,
+                        tags: getTags()
+                    };
+
+                    result.activities.push(activity);
+
+                    if (trade) {
+                        trades.set(`${record.date}|${name}`, activity);
+                    }
+
+                    bar1.increment();
+                }
+
+                this.progress.stop();
+
+                successCallback(result);
+            }
+            catch (error) {
+                console.log("[e] An error occurred while processing the file contents. Stack trace:");
+                console.log(error.stack);
+                this.progress.stop();
+                errorCallback(error);
+            }
+        });
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public isIgnoredRecord(record: VanguardUkRecord): boolean {
+
+        // Rows without a date are blank separators; the rest only move or earn cash and have no security.
+        return !record.date
+            || !/^\d{2}\/\d{2}\/\d{4}$/.test(record.date)
+            || /^(deposit|withdrawal|account fee)|cash account interest|interest paid on cash/i.test(record.details);
+    }
+
+    private getTradeKey(quantity: number, amount: number): string {
+        return `${quantity}|${Math.abs(amount).toFixed(2)}`;
+    }
+
+    /**
+     * Map trades (by quantity and cost) to the ticker in the investment transactions table, if the export has one.
+     */
+    private getTickersByTrade(lines: string[], searchFrom: number): Map<string, string> {
+
+        const tickers = new Map<string, string>();
+
+        const start = lines.findIndex((line, idx) => idx >= searchFrom && /^Date,InvestmentName,/i.test(line));
+        if (start === -1) {
+            return tickers;
+        }
+
+        let end = lines.findIndex((line, idx) => idx > start && /^Cost,/i.test(line));
+        if (end === -1) {
+            end = lines.length;
+        }
+
+        const records: VanguardUkInvestmentRecord[] = parseSync(lines.slice(start + 1, end).join("\n"), {
+            delimiter: ",",
+            relax_column_count: true,
+            skip_empty_lines: true,
+            columns: ["date", "investmentName", "transactionDetails", "quantity", "price", "cost"],
+            cast: (columnValue, context) => {
+                if (context.column === "quantity" || context.column === "price" || context.column === "cost") {
+                    return columnValue === "" ? 0 : parseFloat(columnValue.replace(/,/g, ""));
+                }
+
+                return columnValue;
+            }
+        });
+
+        for (const record of records) {
+            const ticker = record.investmentName?.match(/\(([A-Z0-9]+)\)\s*$/)?.[1];
+
+            if (ticker) {
+                tickers.set(this.getTradeKey(record.quantity, record.cost), ticker);
+            }
+        }
+
+        return tickers;
+    }
+}
