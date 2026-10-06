@@ -29,15 +29,6 @@ describe("vanguardUkConverter", () => {
     jest.clearAllMocks();
   });
 
-  it("should construct", () => {
-
-    // Act
-    const sut = new VanguardUkConverter(new SecurityService(new YahooFinanceServiceMock()));
-
-    // Assert
-    expect(sut).toBeTruthy();
-  });
-
   it("should process sample CSV file", (done) => {
 
     // Arrange
@@ -45,11 +36,9 @@ describe("vanguardUkConverter", () => {
     const inputFile = "samples/vanguard-uk-export.csv";
 
     // Act
-    sut.readAndProcessFile(inputFile, (actualExport: GhostfolioExport, err: Error) => {
+    sut.readAndProcessFile(inputFile, (actualExport: GhostfolioExport) => {
 
       // Assert
-      expect(err).toBeFalsy();
-      expect(actualExport).toBeTruthy();
       expect(actualExport.activities.length).toBe(6);
 
       done();
@@ -150,7 +139,7 @@ describe("vanguardUkConverter", () => {
       sut.readAndProcessFile(tempFileName, () => { done("Should not succeed!"); }, (err: Error) => {
 
         // Assert
-        expect(err).toBeTruthy();
+        expect(err.message).toContain("does not exist");
 
         done();
       });
@@ -165,7 +154,6 @@ describe("vanguardUkConverter", () => {
       sut.processFileContents("", () => { done("Should not succeed!"); }, (err: Error) => {
 
         // Assert
-        expect(err).toBeTruthy();
         expect(err.message).toContain("Cash transactions header not found");
 
         done();
@@ -181,7 +169,6 @@ describe("vanguardUkConverter", () => {
       sut.processFileContents(header, () => { done("Should not succeed!"); }, (err: Error) => {
 
         // Assert
-        expect(err).toBeTruthy();
         expect(err.message).toContain("An error occurred while parsing");
 
         done();
@@ -203,12 +190,32 @@ describe("vanguardUkConverter", () => {
       sut.processFileContents(tempFileContent, () => { done("Should not succeed!"); }, (err: Error) => {
 
         // Assert
-        expect(err).toBeTruthy();
         expect(err.message).toContain("Unit test error");
 
         done();
       });
     });
+  });
+
+  it("should add a dealing fee that is listed before its trade to that trade", (done) => {
+
+    // Arrange
+    let tempFileContent = header;
+    tempFileContent += `22/04/2025,ETF dealing fee (buy) S&P 500 UCITS ETF - Accumulating (VUAG),-7.50,"13,616.68",,\n`;
+    tempFileContent += `22/04/2025,Bought 133 S&P 500 UCITS ETF - Accumulating (VUAG),"-9,938.80","13,624.18",,`;
+
+    const sut = new VanguardUkConverter(new SecurityService(createYahooFinanceServiceMock()));
+
+    // Act
+    sut.processFileContents(tempFileContent, (actualExport: GhostfolioExport) => {
+
+      // Assert
+      expect(actualExport.activities.length).toBe(1);
+      expect(actualExport.activities[0].type).toBe("BUY");
+      expect(actualExport.activities[0].fee).toBe(7.5);
+
+      done();
+    }, () => done("Should not have an error!"));
   });
 
   it("should log and skip the trade and its dealing fee when Yahoo Finance returns no symbol", (done) => {

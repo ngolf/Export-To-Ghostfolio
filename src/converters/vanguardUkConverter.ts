@@ -60,7 +60,6 @@ export class VanguardUkConverter extends AbstractConverter {
 
             try {
 
-                // Check if parsing failed..
                 if (err || records === undefined || records.length === 0) {
                     let errorMsg = "An error occurred while parsing!";
 
@@ -98,13 +97,14 @@ export class VanguardUkConverter extends AbstractConverter {
                 // Trades by date and fund name, so a following dealing fee can be added to its trade (null when the trade was skipped).
                 const trades = new Map<string, GhostfolioActivity | null>();
 
-                // Populate the progress bar.
+                // A dealing fee can be listed before its trade, so they are matched once all trades are known.
+                const dealingFees: { tradeKey: string, details: string, date: string, amount: number }[] = [];
+
                 const bar1 = this.progress.create(records.length, 0);
 
                 for (let idx = 0; idx < records.length; idx++) {
                     const record = records[idx];
 
-                    // Check if the record should be ignored.
                     if (this.isIgnoredRecord(record)) {
                         bar1.increment();
                         continue;
@@ -113,18 +113,9 @@ export class VanguardUkConverter extends AbstractConverter {
                     const date = dayjs(record.date, "DD/MM/YYYY").format("YYYY-MM-DDTHH:mm:ssZ");
                     const details = record.details.trim();
 
-                    // Dealing fees are added to the fee of the trade they belong to.
                     const dealingFee = details.match(/^ETF dealing fee \((?:buy|sell)\) (.+)$/i);
                     if (dealingFee) {
-                        const tradeKey = `${record.date}|${dealingFee[1]}`;
-
-                        if (!trades.has(tradeKey)) {
-                            result.activities.push(this.createCashActivity(GhostfolioOrderType.fee, details, date, record.amount));
-                        }
-                        else if (trades.get(tradeKey)) {
-                            trades.get(tradeKey).fee += Math.abs(record.amount);
-                        }
-
+                        dealingFees.push({ tradeKey: `${record.date}|${dealingFee[1]}`, details: details, date: date, amount: record.amount });
                         bar1.increment();
                         continue;
                     }
@@ -191,7 +182,6 @@ export class VanguardUkConverter extends AbstractConverter {
                         return errorCallback(err);
                     }
 
-                    // Log whenever there was no match found.
                     if (!security) {
                         this.progress.log(`[i] No result found for ${action} action for ${symbol || name} with currency ${currency}! Please add this manually..\n`);
 
@@ -226,6 +216,17 @@ export class VanguardUkConverter extends AbstractConverter {
                     bar1.increment();
                 }
 
+                for (const dealingFee of dealingFees) {
+
+                    // A fee without a trade is charged on its own; a fee of a skipped trade is dropped with it.
+                    if (!trades.has(dealingFee.tradeKey)) {
+                        result.activities.push(this.createCashActivity(GhostfolioOrderType.fee, dealingFee.details, dealingFee.date, dealingFee.amount));
+                    }
+                    else if (trades.get(dealingFee.tradeKey)) {
+                        trades.get(dealingFee.tradeKey).fee += Math.abs(dealingFee.amount);
+                    }
+                }
+
                 this.progress.stop();
 
                 successCallback(result);
@@ -248,10 +249,16 @@ export class VanguardUkConverter extends AbstractConverter {
         return this.isBlankRecord(record) || /^(deposit|withdrawal)/i.test(record.details);
     }
 
+    /**
+     * Check if a cash row is a blank separator rather than a transaction.
+     */
     private isBlankRecord(record: VanguardUkRecord): boolean {
         return !record.date || !/^\d{2}\/\d{2}\/\d{4}$/.test(record.date);
     }
 
+    /**
+     * Create an activity for a fee or interest, which has no security of its own.
+     */
     private createCashActivity(type: GhostfolioOrderType, details: string, date: string, amount: number): GhostfolioActivity {
         const isFee = type === GhostfolioOrderType.fee;
 
@@ -270,6 +277,9 @@ export class VanguardUkConverter extends AbstractConverter {
         };
     }
 
+    /**
+     * Create the manual asset profile that Ghostfolio needs for a fixed fee or interest symbol.
+     */
     private createAssetProfile(symbol: string, name: string): GhostfolioAssetProfile {
         return {
             assetClass: null,
@@ -312,6 +322,9 @@ export class VanguardUkConverter extends AbstractConverter {
         return Array.from(balances, ([date, value]) => ({ date, value }));
     }
 
+    /**
+     * Build the key that links a cash row to its row in the investment transactions table.
+     */
     private getTradeKey(quantity: number, amount: number): string {
         return `${quantity}|${Math.abs(amount).toFixed(2)}`;
     }
