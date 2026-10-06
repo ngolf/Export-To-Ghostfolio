@@ -64,21 +64,26 @@ export class RobinhoodConverter extends AbstractConverter {
                 }
 
                 // Withheld tax is a separate row, so collect it to add it to the fee of the dividend.
+                // Several dividends of one instrument on the same day share the tax in proportion to their amount.
                 const withheldTax = new Map<string, number>();
+                const dividendTotals = new Map<string, number>();
                 for (const record of records) {
-                    if (["nrat", "dtax"].includes(record.transCode?.toLocaleLowerCase())) {
-                        const key = `${record.activityDate}|${record.instrument}`;
+                    const key = `${record.activityDate}|${record.instrument}`;
+                    const transCode = record.transCode?.toLocaleLowerCase();
+
+                    if (transCode === "nrat" || transCode === "dtax") {
                         withheldTax.set(key, (withheldTax.get(key) ?? 0) + Math.abs(record.amount));
+                    }
+                    else if (transCode === "cdiv") {
+                        dividendTotals.set(key, (dividendTotals.get(key) ?? 0) + record.amount);
                     }
                 }
 
-                // Populate the progress bar.
                 const bar1 = this.progress.create(records.length, 0);
 
                 for (let idx = 0; idx < records.length; idx++) {
                     const record = records[idx];
 
-                    // Check if the record should be ignored.
                     if (this.isIgnoredRecord(record)) {
                         bar1.increment();
                         continue;
@@ -103,7 +108,9 @@ export class RobinhoodConverter extends AbstractConverter {
 
                         quantity = parseFloat(shares[1]);
                         unitPrice = record.amount / quantity;
-                        fee = withheldTax.get(`${record.activityDate}|${record.instrument}`) ?? 0;
+
+                        const key = `${record.activityDate}|${record.instrument}`;
+                        fee = (withheldTax.get(key) ?? 0) * record.amount / dividendTotals.get(key);
                     }
 
                     let security: YahooFinanceRecord;
@@ -112,7 +119,8 @@ export class RobinhoodConverter extends AbstractConverter {
                             undefined,
                             // Yahoo Finance writes share classes with a dash (BRK.B is BRK-B).
                             record.instrument.replace(".", "-"),
-                            record.description.split("\n")[0],
+                            // A dividend description is not a security name.
+                            action === "dividend" ? null : record.description.split("\n")[0],
                             "USD",
                             this.progress);
                     }
@@ -122,7 +130,6 @@ export class RobinhoodConverter extends AbstractConverter {
                         return errorCallback(err);
                     }
 
-                    // Log whenever there was no match found.
                     if (!security) {
                         this.progress.log(`[i] No result found for ${action} action for ${record.instrument} with currency USD! Please add this manually..\n`);
                         bar1.increment();

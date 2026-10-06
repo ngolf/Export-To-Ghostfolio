@@ -65,6 +65,47 @@ describe("robinhoodConverter", () => {
         }, () => { done.fail("Should not have an error!"); });
     });
 
+    it("should split withheld tax over dividends of the same instrument on the same day", (done) => {
+
+        // Arrange
+        let tempFileContent = header;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30 new dividend GB nra tax withhold","NRAT","","","($0.40)"\n`;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30","CDIV","","","$3.00"\n`;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.10","CDIV","","","$1.00"\n`;
+
+        const sut = new RobinhoodConverter(new SecurityService(new YahooFinanceServiceMock()));
+
+        // Act
+        sut.processFileContents(tempFileContent, (actualExport: GhostfolioExport) => {
+
+            // Assert
+            expect(actualExport.activities.map(a => a.fee)).toEqual([expect.closeTo(0.30, 6), expect.closeTo(0.10, 6)]);
+
+            done();
+        }, () => done("Should not have an error!"));
+    });
+
+    it("should not search for the description of a dividend", (done) => {
+
+        // Arrange
+        let tempFileContent = header;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30","CDIV","","","$3.00"\n`;
+
+        const yahooFinanceServiceMock = new YahooFinanceServiceMock();
+        const searchSpy = jest.spyOn(yahooFinanceServiceMock, "search").mockImplementation(() => { return Promise.resolve({ quotes: [] }) });
+        const sut = new RobinhoodConverter(new SecurityService(yahooFinanceServiceMock));
+
+        // Act
+        sut.processFileContents(tempFileContent, () => {
+
+            // Assert
+            expect(searchSpy).toHaveBeenCalledTimes(1);
+            expect(searchSpy.mock.calls[0][0]).toBe("GOOGL");
+
+            done();
+        }, () => done("Should not have an error!"));
+    });
+
     describe("should throw an error if", () => {
 
         it("the input file does not exist", (done) => {
