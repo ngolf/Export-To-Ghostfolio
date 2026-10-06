@@ -29,6 +29,7 @@ This tool allows you to convert CSV transaction exports to an import file that c
 - [Rabobank](https://rabobank.nl)
 - [Relai](https://relai.app)
 - [Revolut](https://revolut.com)
+- [Robinhood](https://robinhood.com)
 - [Saxo](https://www.home.saxo)
 - [Schwab](https://www.schwab.com)
 - [Swissquote](https://en.swissquote.com/)
@@ -157,6 +158,10 @@ Open the Relai app. Tap "Transactions". Tap the download symbol in the top-right
 _The steps below are similar for both Revolut Invest as Revolut Crypto. Simply replace "Invest" by "Crypto"._
 
 Open the Revolut app and open the "Invest"-tab. Press the "More"-button, and then choose "Documents". Select your investment account and select the first option, "Account statement". Choose the "Excel" option and select the date range. Then download the file and save it on your device. Convert the file from `.xlsx` to `.csv`. **Set the separation character to `,` (comma)!**
+
+### Robinhood
+
+Login to your Robinhood account, go to "Account" > "Reports and statements" > "Reports" and generate an account activity report. Download the report as CSV. The converter imports the trades and dividends (withheld tax is added as fee to the dividend). Currency exchanges, deposits, interest and options are skipped.
 
 ### Saxo
 
@@ -307,6 +312,7 @@ You can now run `npm run start [exporttype]`. See the table with run commands be
 | Rabobank      | `run start rabobank`                |
 | Relai         | `run start relai`                   |
 | Revolut       | `run start revolut`                 |
+| Robinhood     | `run start robinhood` (or `rh`)     |
 | Saxo          | `run start saxo`                    |
 | Schwab        | `run start schwab`                  |
 | Swissquote    | `run start swissquote` (or `sq`)    |

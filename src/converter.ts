@@ -27,6 +27,7 @@ import { ParqetConverter } from "./converters/parqetConverter";
 import { RabobankConverter } from "./converters/rabobankConverter";
 import { RelaiConverter } from "./converters/relaiConverter";
 import { RevolutConverter } from "./converters/revolutConverter";
+import { RobinhoodConverter } from "./converters/robinhoodConverter";
 import { SaxoConverter } from "./converters/saxoConverter";
 import { SchwabConverter } from "./converters/schwabConverter";
 import { SwissquoteConverter } from "./converters/swissquoteConverter";
@@ -206,6 +207,11 @@ async function createConverter(converterType: string, securityService?: Security
         case "revolut":
             console.log("[i] Processing file using Revolut converter");
             converter = new RevolutConverter(securityService);
+            break;
+        case "rh":
+        case "robinhood":
+            console.log("[i] Processing file using Robinhood converter");
+            converter = new RobinhoodConverter(securityService);
             break;
         case "saxo":
             console.log("[i] Processing file using Saxo converter");
