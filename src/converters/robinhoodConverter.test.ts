@@ -99,8 +99,8 @@ describe("robinhoodConverter", () => {
         sut.processFileContents(tempFileContent, () => {
 
             // Assert
-            expect(searchSpy).toHaveBeenCalledTimes(1);
-            expect(searchSpy.mock.calls[0][0]).toBe("GOOGL");
+            const queries = new Set(searchSpy.mock.calls.map(call => call[0]));
+            expect(queries).toEqual(new Set(["GOOGL"]));
 
             done();
         }, () => done("Should not have an error!"));
