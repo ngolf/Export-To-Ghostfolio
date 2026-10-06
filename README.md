@@ -5,7 +5,7 @@
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/dickwolff/export-to-ghostfolio?style=for-the-badge)](https://hub.docker.com/r/dickwolff/export-to-ghostfolio) &nbsp; ![Stars](https://img.shields.io/github/stars/dickwolff/export-to-ghostfolio?style=for-the-badge) &nbsp; [![Quality Gate Status](https://img.shields.io/sonar/quality_gate/dickwolff_Export-To-Ghostfolio.svg?server=https%3A%2F%2Fsonarcloud.io&style=for-the-badge)](https://sonarcloud.io/dashboard?id=dickwolff_Export-To-Ghostfolio) &nbsp; ![Code Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/dickwolff/dd5dc24ffa62de59b3d836f856f48a10/raw/cov.json) 
 
-This tool allows you to convert CSV transaction exports to an import file that can be read by [Ghostfolio](https://github.com/ghostfolio/ghostfolio/). Currently there is support for 26 brokers:
+This tool allows you to convert CSV transaction exports to an import file that can be read by [Ghostfolio](https://github.com/ghostfolio/ghostfolio/). Currently there is support for 27 brokers:
 
 ![Overview of converters](./assets/social.png)
 
@@ -184,6 +184,10 @@ Download [`pytr`](https://github.com/pytr-org/pytr/) on your local machine. Afte
 ### Trading 212
 
 Login to your Trading 212 account and create an export file (via History > Download icon). Choose the period from which you wish to export your history and click download.
+
+### Vanguard UK
+
+Login to Vanguard Investor UK and download your transaction history, which gives you a `.xlsx` file (named like `LoadDocstore.xlsx`). The workbook has a summary tab and a tab with your transactions. Open it in your editor of choice (e.g. Libreoffice or Excel), select the transactions tab and save only that tab as CSV (**set the separation character to comma (`,`)**). The summary tab is not needed and is discarded in the process. The name of the transactions tab contains your account number, so it differs per account. The tab has a table with cash transactions and a table with investment transactions, and the converter uses both. The cash transactions provide the buys, dividends and fees, and the investment transactions are used to look up the ticker of older buys that only have a fund name. Interest and account fees are imported as manual activities, and the cash balance of each day is added to the account (Ghostfolio only imports balances for accounts that do not exist yet).
 
 ### XTB
 
