@@ -4,12 +4,16 @@ import { parse as parseSync } from "csv-parse/sync";
 import customParseFormat from "dayjs/plugin/customParseFormat";
 import { AbstractConverter } from "./abstractconverter";
 import { SecurityService } from "../securityService";
-import { GhostfolioExport } from "../models/ghostfolioExport";
+import { GhostfolioAssetProfile, GhostfolioExport } from "../models/ghostfolioExport";
 import { GhostfolioActivity } from "../models/ghostfolioActivity";
 import { VanguardUkInvestmentRecord, VanguardUkRecord } from "../models/vanguardUkRecord";
 import YahooFinanceRecord from "../models/yahooFinanceRecord";
 import { GhostfolioOrderType } from "../models/ghostfolioOrderType";
 import { getTags } from "../helpers/tagHelpers";
+
+// Fixed so repeated imports reuse the same Ghostfolio asset profiles.
+const FEE_SYMBOL = "6f3c1a52-2d0b-4a9e-9a53-1c8b7f0e4d21";
+const INTEREST_SYMBOL = "b4e8d7a1-5c36-4f0a-8e2b-93a1d6c7f580";
 
 export class VanguardUkConverter extends AbstractConverter {
 
@@ -73,6 +77,18 @@ export class VanguardUkConverter extends AbstractConverter {
                         date: new Date(),
                         version: "v0"
                     },
+                    accounts: [{
+                        balances: this.getBalances(records),
+                        comment: null,
+                        currency: "GBP",
+                        id: process.env.GHOSTFOLIO_ACCOUNT_ID,
+                        name: "Vanguard UK",
+                        platformId: null
+                    }],
+                    assetProfiles: [
+                        this.createAssetProfile(FEE_SYMBOL, "Vanguard UK Account Fee"),
+                        this.createAssetProfile(INTEREST_SYMBOL, "Vanguard UK Cash Interest")
+                    ],
                     activities: []
                 }
 
@@ -100,12 +116,28 @@ export class VanguardUkConverter extends AbstractConverter {
                     // Dealing fees are added to the fee of the trade they belong to.
                     const dealingFee = details.match(/^ETF dealing fee \((?:buy|sell)\) (.+)$/i);
                     if (dealingFee) {
-                        const tradeToCharge = trades.get(`${record.date}|${dealingFee[1]}`);
+                        const tradeKey = `${record.date}|${dealingFee[1]}`;
 
-                        if (tradeToCharge) {
-                            tradeToCharge.fee += Math.abs(record.amount);
+                        if (!trades.has(tradeKey)) {
+                            result.activities.push(this.createCashActivity(GhostfolioOrderType.fee, details, date, record.amount));
+                        }
+                        else if (trades.get(tradeKey)) {
+                            trades.get(tradeKey).fee += Math.abs(record.amount);
                         }
 
+                        bar1.increment();
+                        continue;
+                    }
+
+                    // Interest and account fees do not have a security, so add those immediately.
+                    if (/cash account interest|interest paid on cash/i.test(details)) {
+                        result.activities.push(this.createCashActivity(GhostfolioOrderType.interest, details, date, record.amount));
+                        bar1.increment();
+                        continue;
+                    }
+
+                    if (/^account fee/i.test(details)) {
+                        result.activities.push(this.createCashActivity(GhostfolioOrderType.fee, details, date, record.amount));
                         bar1.increment();
                         continue;
                     }
@@ -212,10 +244,72 @@ export class VanguardUkConverter extends AbstractConverter {
      */
     public isIgnoredRecord(record: VanguardUkRecord): boolean {
 
-        // Rows without a date are blank separators; the rest only move or earn cash and have no security.
-        return !record.date
-            || !/^\d{2}\/\d{2}\/\d{4}$/.test(record.date)
-            || /^(deposit|withdrawal|account fee)|cash account interest|interest paid on cash/i.test(record.details);
+        // Rows without a date are blank separators; deposits and withdrawals are reflected in the account balances.
+        return this.isBlankRecord(record) || /^(deposit|withdrawal)/i.test(record.details);
+    }
+
+    private isBlankRecord(record: VanguardUkRecord): boolean {
+        return !record.date || !/^\d{2}\/\d{2}\/\d{4}$/.test(record.date);
+    }
+
+    private createCashActivity(type: GhostfolioOrderType, details: string, date: string, amount: number): GhostfolioActivity {
+        const isFee = type === GhostfolioOrderType.fee;
+
+        return {
+            accountId: process.env.GHOSTFOLIO_ACCOUNT_ID,
+            comment: details,
+            fee: isFee ? Math.abs(amount) : 0,
+            quantity: isFee ? 0 : 1,
+            type: type,
+            unitPrice: isFee ? 0 : amount,
+            currency: "GBP",
+            dataSource: "MANUAL",
+            date: date,
+            symbol: isFee ? FEE_SYMBOL : INTEREST_SYMBOL,
+            tags: getTags()
+        };
+    }
+
+    private createAssetProfile(symbol: string, name: string): GhostfolioAssetProfile {
+        return {
+            assetClass: null,
+            assetSubClass: null,
+            comment: null,
+            countries: [],
+            currency: "GBP",
+            cusip: null,
+            dataSource: "MANUAL",
+            figi: null,
+            figiComposite: null,
+            figiShareClass: null,
+            holdings: [],
+            isActive: true,
+            isin: null,
+            marketData: [],
+            name: name,
+            sectors: [],
+            symbol: symbol,
+            url: null
+        };
+    }
+
+    /**
+     * The closing balance of each day in the cash table.
+     */
+    private getBalances(records: VanguardUkRecord[]): { date: string, value: number }[] {
+
+        const balances = new Map<string, number>();
+
+        for (const record of records) {
+            if (this.isBlankRecord(record)) {
+                continue;
+            }
+
+            const [day, month, year] = record.date.split("/");
+            balances.set(`${year}-${month}-${day}T00:00:00.000Z`, record.balance);
+        }
+
+        return Array.from(balances, ([date, value]) => ({ date, value }));
     }
 
     private getTradeKey(quantity: number, amount: number): string {
