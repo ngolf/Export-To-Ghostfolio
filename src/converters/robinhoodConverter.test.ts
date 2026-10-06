@@ -65,6 +65,45 @@ describe("robinhoodConverter", () => {
         }, () => { done.fail("Should not have an error!"); });
     });
 
+    it("should skip a dividend without an amount", (done) => {
+
+        // Arrange
+        let tempFileContent = header;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30 new dividend GB nra tax withhold","NRAT","","","($0.40)"\n`;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30","CDIV","","",""\n`;
+
+        const sut = new RobinhoodConverter(new SecurityService(new YahooFinanceServiceMock()));
+
+        // Act
+        sut.processFileContents(tempFileContent, (actualExport: GhostfolioExport) => {
+
+            // Assert
+            expect(actualExport.activities.length).toBe(0);
+
+            done();
+        }, () => done("Should not have an error!"));
+    });
+
+    it("should not divide the withheld tax by a dividend total of zero", (done) => {
+
+        // Arrange
+        let tempFileContent = header;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30 new dividend GB nra tax withhold","NRAT","","","($0.40)"\n`;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30","CDIV","","","$3.00"\n`;
+        tempFileContent += `"9/9/2026","9/9/2026","9/9/2026","GOOGL","Cash Div: R/D 2026-09-07 P/D 2026-09-14 - 10 shares at 0.30","CDIV","","","($3.00)"\n`;
+
+        const sut = new RobinhoodConverter(new SecurityService(new YahooFinanceServiceMock()));
+
+        // Act
+        sut.processFileContents(tempFileContent, (actualExport: GhostfolioExport) => {
+
+            // Assert
+            expect(actualExport.activities.map(a => a.fee)).toEqual([0, 0]);
+
+            done();
+        }, () => done("Should not have an error!"));
+    });
+
     it("should split withheld tax over dividends of the same instrument on the same day", (done) => {
 
         // Arrange

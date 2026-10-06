@@ -110,7 +110,10 @@ export class RobinhoodConverter extends AbstractConverter {
                         unitPrice = record.amount / quantity;
 
                         const key = `${record.activityDate}|${record.instrument}`;
-                        fee = (withheldTax.get(key) ?? 0) * record.amount / dividendTotals.get(key);
+                        const dividendTotal = dividendTotals.get(key);
+
+                        // Dividends that cancel each other out on one day have no total to split the tax over.
+                        fee = dividendTotal ? (withheldTax.get(key) ?? 0) * record.amount / dividendTotal : 0;
                     }
 
                     let security: YahooFinanceRecord;
@@ -172,7 +175,9 @@ export class RobinhoodConverter extends AbstractConverter {
     public isIgnoredRecord(record: RobinhoodRecord): boolean {
 
         // Only trades and dividends are converted. This skips currency exchanges, deposits, interest, options, etc.
-        return !["buy", "sell", "cdiv"].includes(record.transCode?.toLocaleLowerCase());
+        const transCode = record.transCode?.toLocaleLowerCase();
+
+        return !["buy", "sell", "cdiv"].includes(transCode) || (transCode === "cdiv" && !record.amount);
     }
 
     /**
